@@ -59,20 +59,22 @@ class tfidf:
 
         # Calculates document frequency for each term
         self.calculate_document_frequencies(doc_term_frequencies)
+        self.calculate_doc_length(doc_term_frequencies)
         # Build vocabulary and mapping of vocabularies to indices
         self.build_vocabulary(doc_term_frequencies)
 
         self.vectorize_documents(doc_term_frequencies)
+        
+        
 
         print(f"Vocabulary size |V|: {len(self.vocab)} unique terms across {self.N} documents.")
-        ## Commented to avoid taking your memory
-        # self.save_index()
+        
     def inverted_index(self, doc_term_frequencies):
         ii = defaultdict(dict)
         for doc_id, counts in doc_term_frequencies.items():
             for term, count in counts.items:
                 ii[term][doc_id] = count
-        return dict(ii)
+        self.save_index()
     def calculate_document_frequencies(self, doc_term_frequencies):
         df_counts = defaultdict(int)
         for counts in doc_term_frequencies.values():
@@ -80,11 +82,35 @@ class tfidf:
                 df_counts[term] += 1
         self.df = dict(df_counts)
     def build_vocabulary(self, term_frequencies, max_vocab_size=20000):
-        pass
+        collection_frequencies = Counter()
+        for counts in term_frequencies.values():
+            collection_frequencies.update(counts)
+        if max_vocab_size and max_vocab_size < len(collection_frequencies):
+            kterms = [term for term, _ in collection_frequencies.most_common(max_vocab_size)]
+        else:
+            kterms = list(collection_frequencies.keys())
+        self.vocab = sorted(list(kterms))
+        self.word_to_idx = {word: i for i, word in enumerate(self.vocab)}
+        
     def vectorize_documents(self, doc_term_frequencies):
         pass
+    def calculate_tf_idf(self, count, df_val):
+        if count <= 0 or df_val <= 0 or self.N == 0:
+            return 0
+        tf = 1 + math.log10(count)
+        idf = math.log10(self.N / df_val)
+        return tf * idf
+    #calculates doc lengths
+    def calculate_doc_length(self, doc_term_frequencies):
+        dl_count = 0
+        lengths = {}
+        for counts in doc_term_frequencies.values():
+            for term in counts.keys():
+                dl_count[term] += 1
+            lengths = dl_count[term]
+        self.doc_lengths = lengths
     def save_index(self):
-        """Serialize current VSM index state and raw documents to a JSON file."""
+        """Serialize current index state and raw documents to a JSON file."""
         index_data = {
             "N": self.N,
             "vocab": self.vocab,
@@ -92,6 +118,7 @@ class tfidf:
             "df": self.df,
             "doc_vectors": self.doc_vectors,
             "documents": self.documents,
+            "doc_lengths": self.doc_lengths,
         }
         with open(self.index_file_path, "w", encoding="utf-8") as f:
             json.dump(index_data, f)
@@ -110,8 +137,11 @@ class tfidf:
         self.df = index_data["df"]
         self.doc_vectors = index_data["doc_vectors"]
         self.documents = index_data["documents"]
+        self.doc_lengths = index_data["doc_lengths"]
         print(f"Index successfully loaded from '{self.index_file_path}'.")
-         
+    def main():
+        pass
+             
 
     
         
