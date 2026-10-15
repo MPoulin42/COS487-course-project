@@ -24,7 +24,7 @@ Significance tests between every pair of runs given (paired, per query):
     paired t-test and paired randomization test (both pure Python, no scipy).
 
 Usage
-    # paper level
+    #paper level
     python eval_metrics.py --qrels Study_paper_qrel.tsv --queries Study.json \
         --runs teamName_paper_tfidf_study.tsv teamName_paper_bm25_study.tsv \
         --per-query-out paper_per_query.csv --summary-out paper_summary.csv \
