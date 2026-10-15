@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Annotate Test Queries</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>Annotate top paragraph ({{ model|upper }})</h1>
+  <nav><a href="/" style="margin:0">&larr; Search</a></nav>
+  <p class="meta">Labels save to <b>{{ path }}</b> as <code>qid 0 paraid relevance</code>.
+     2 = fully answers the query, 1 = useful context only, 0 = no useful information.
+     <span id="count">{{ done }}</span> / {{ items|length }} done.</p>
+</header>
+<main>
+{% for it in items %}
+  <article class="card" data-qid="{{ it.qid }}" data-para="{{ it.para_id }}">
+    <h2>{{ it.query }}</h2>
+    <div class="meta">{{ it.qid }} &middot; {{ it.para_id }} &middot;
+      <a href="{{ url_for('paper_page', paper_id=it.paper_id, q=it.query, para=it.para_id) }}#{{ it.para_id }}" target="_blank">open paper</a></div>
+    <p>{{ it.text }}</p>
+    <div class="rel">
+      {% for r in (2, 1, 0) %}<button data-r="{{ r }}" class="{{ 'on' if it.label == r }}">{{ r }}</button>{% endfor %}
+    </div>
+  </article>
+{% endfor %}
+</main>
+<script>
+document.querySelectorAll(".rel button").forEach(b => b.addEventListener("click", async () => {
+  const card = b.closest(".card");
+  const r = await fetch("/api/annotate", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({qid: card.dataset.qid, para_id: card.dataset.para, relevance: +b.dataset.r})});
+  if (!r.ok) { alert("Save failed"); return; }
+  card.querySelectorAll(".rel button").forEach(x => x.classList.toggle("on", x === b));
+  document.getElementById("count").textContent = (await r.json()).saved;
+}));
+</script>
+</body>
+</html>
