@@ -7,61 +7,168 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-<header>
+<header class="wide">
   <h1>arXiv Paper Search
     {% if annotate %}<nav style="display:inline"><a href="{{ url_for('annotate') }}">Annotate</a></nav>{% endif %}
   </h1>
-  <form class="bar" id="form" role="search">
-    <input type="search" id="q" name="q" placeholder="Search Aug-Sep 2024 arXiv papers, e.g. diffusion model image editing" autofocus aria-label="Search query">
-    <button class="go" type="submit">Search</button>
-  </form>
-  <div class="opts">
-    <span>Results as
-      <span class="seg" role="radiogroup" aria-label="Result level">
-        <input type="radio" name="level" id="lv-paper" value="paper" checked><label for="lv-paper">Papers</label>
-        <input type="radio" name="level" id="lv-para" value="paragraph"><label for="lv-para">Paragraphs</label>
-      </span>
-    </span>
-    <span>Model
-      <span class="seg" role="radiogroup" aria-label="Ranking model">
-        <input type="radio" name="model" id="m-bm25" value="bm25" checked><label for="m-bm25">BM25</label>
-        <input type="radio" name="model" id="m-tfidf" value="tfidf"><label for="m-tfidf">TF-IDF</label>
-      </span>
-    </span>
-  </div>
-  <div class="examples">Try:
-    <button type="button">retrieval augmented generation for question answering</button>
-    <button type="button">graph neural network node classification</button>
-    <button type="button">quantization of large language models</button>
-  </div>
 </header>
-<main>
-  <div id="status" role="status" aria-live="polite"></div>
-  <div id="results"></div>
-  <div class="pager" id="pager"></div>
-</main>
+<div class="layout">
+  <aside>
+    <section class="filters" aria-labelledby="f-title">
+      <h2 id="f-title">Filters</h2>
+      <fieldset>
+        <legend>Submitted</legend>
+        {% for code, label in months.items() %}
+        <label class="chk"><input type="checkbox" name="months" value="{{ code }}"> {{ label }}</label>
+        {% endfor %}
+      </fieldset>
+      <fieldset>
+        <legend>Paper length</legend>
+        {% for code, label in length_labels.items() %}
+        <label class="chk"><input type="checkbox" name="length" value="{{ code }}"> {{ label }}</label>
+        {% endfor %}
+      </fieldset>
+      <button type="button" class="linkbtn" id="clear-filters" hidden>Clear filters</button>
+    </section>
+    <button type="button" class="linkbtn big" id="open-history">Search History</button>
+  </aside>
+
+  <main>
+    <div id="search-view">
+      <form class="bar" id="form" role="search" autocomplete="off">
+        <div class="combo">
+          <input type="search" id="q" name="q" placeholder="Search Aug-Sep 2024 arXiv papers, e.g. diffusion model image editing"
+                 autofocus aria-label="Search query" role="combobox" aria-expanded="false" aria-controls="suggest" aria-autocomplete="list">
+          <ul id="suggest" role="listbox" hidden></ul>
+        </div>
+        <button class="go" type="submit">Search</button>
+      </form>
+      <div class="opts">
+        <span>Results as
+          <span class="seg" role="radiogroup" aria-label="Result level">
+            <input type="radio" name="level" id="lv-paper" value="paper" checked><label for="lv-paper">Papers</label>
+            <input type="radio" name="level" id="lv-para" value="paragraph"><label for="lv-para">Paragraphs</label>
+          </span>
+        </span>
+        <span>Model
+          <span class="seg" role="radiogroup" aria-label="Ranking model">
+            <input type="radio" name="model" id="m-bm25" value="bm25" checked><label for="m-bm25">BM25</label>
+            <input type="radio" name="model" id="m-tfidf" value="tfidf"><label for="m-tfidf">TF-IDF</label>
+          </span>
+        </span>
+      </div>
+      <div class="examples">Try:
+        <button type="button">retrieval augmented generation for question answering</button>
+        <button type="button">graph neural network node classification</button>
+        <button type="button">quantization of large language models</button>
+      </div>
+      <div id="status" role="status" aria-live="polite"></div>
+      <div id="results"></div>
+      <div class="pager" id="pager"></div>
+    </div>
+
+    <section id="history-view" hidden aria-labelledby="h-title">
+      <button type="button" class="linkbtn" id="close-history">&larr; Back to search</button>
+      <h2 id="h-title">Search history</h2>
+      <div class="hist-tools">
+        <button type="button" class="linkbtn" id="sort-history" aria-label="Change sort order"></button>
+        <button type="button" class="linkbtn" id="clear-history">Clear all</button>
+      </div>
+      <ul id="history-list"></ul>
+      <p id="history-empty" class="meta" hidden>No searches yet. Searches are saved in this browser only.</p>
+    </section>
+  </main>
+</div>
 <script>
 const PAGE = {{ page_size }};
 let hits = [], page = 1, lastQ = "";
 const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
 const val = n => document.querySelector(`input[name=${n}]:checked`).value;
-const esc = s => s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const checked = n => $$(`input[name=${n}]:checked`).map(e => e.value);
+const esc = s => s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-async function search(pushState = true) {
+/* ---------- search history (stored in this browser only) ---------- */
+const HKEY = "ir_search_history", HMAX = 100;
+let memHistory = [];
+const loadHistory = () => {
+  try { return JSON.parse(localStorage.getItem(HKEY)) || []; } catch (e) { return memHistory; }
+};
+const saveHistory = h => {
+  memHistory = h;
+  try { localStorage.setItem(HKEY, JSON.stringify(h)); } catch (e) {}
+};
+function addHistory(q, level, model) {
+  const h = loadHistory().filter(x => x.q.toLowerCase() !== q.toLowerCase());
+  h.unshift({q, level, model, ts: Date.now()});
+  saveHistory(h.slice(0, HMAX));
+}
+const fmtDate = ts => new Date(ts).toLocaleString([], {dateStyle: "medium", timeStyle: "short"});
+
+/* ---------- recent searches / autocomplete ---------- */
+let sugg = [], active = -1;
+function showSuggest() {
+  const typed = $("#q").value.trim().toLowerCase();
+  const all = loadHistory();
+  sugg = (typed ? all.filter(x => x.q.toLowerCase().includes(typed) && x.q.toLowerCase() !== typed) : all).slice(0, 5);
+  active = -1;
+  const box = $("#suggest");
+  if (!sugg.length) { hideSuggest(); return; }
+  box.innerHTML = (typed ? "" : '<li class="sg-head" role="presentation">Recent Searches</li>') +
+    sugg.map((x, i) => `<li role="option" id="sg-${i}" data-i="${i}">${esc(x.q)}</li>`).join("");
+  box.hidden = false; $("#q").setAttribute("aria-expanded", "true");
+}
+function hideSuggest() { $("#suggest").hidden = true; $("#q").setAttribute("aria-expanded", "false"); active = -1; }
+function pick(i) {
+  const x = sugg[i]; if (!x) return;
+  $("#q").value = x.q; hideSuggest(); search();
+}
+function moveActive(d) {
+  if (!sugg.length) return;
+  active = (active + d + sugg.length) % sugg.length;
+  $$("#suggest li[role=option]").forEach((li, i) => li.classList.toggle("active", i === active));
+  $("#q").setAttribute("aria-activedescendant", `sg-${active}`);
+}
+$("#q").addEventListener("focus", showSuggest);
+$("#q").addEventListener("input", showSuggest);
+$("#q").addEventListener("keydown", e => {
+  if (e.key === "ArrowDown") { e.preventDefault(); if ($("#suggest").hidden) showSuggest(); moveActive(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); moveActive(-1); }
+  else if (e.key === "Escape") hideSuggest();
+  else if (e.key === "Enter" && active >= 0) { e.preventDefault(); pick(active); }
+});
+$("#suggest").addEventListener("mousedown", e => { const li = e.target.closest("li[data-i]"); if (li) { e.preventDefault(); pick(+li.dataset.i); } });
+document.addEventListener("click", e => { if (!e.target.closest(".combo")) hideSuggest(); });
+
+/* ---------- search ---------- */
+function params() {
+  const p = new URLSearchParams({q: $("#q").value.trim(), model: val("model"), level: val("level")});
+  const m = checked("months"), l = checked("length");
+  if (m.length) p.set("months", m.join(","));
+  if (l.length) p.set("length", l.join(","));
+  return p;
+}
+function updateClear() { $("#clear-filters").hidden = !(checked("months").length || checked("length").length); }
+
+async function search(remember = true) {
   const q = $("#q").value.trim();
   if (!q) return;
+  hideSuggest(); showSearch();
   lastQ = q; page = 1;
+  if (remember) addHistory(q, val("level"), val("model"));
   $("#status").textContent = "Searching...";
-  const params = new URLSearchParams({q, model: val("model"), level: val("level")});
-  if (pushState) history.replaceState(null, "", "?" + params);
+  const ps = params();
+  history.replaceState(null, "", "?" + ps);
   try {
-    const r = await fetch("/api/search?" + params);
+    const r = await fetch("/api/search?" + ps);
     if (!r.ok) throw new Error(r.status);
     const d = await r.json();
     hits = d.results;
+    const filt = checked("months").length || checked("length").length ? ", filtered" : "";
     $("#status").textContent = hits.length
-      ? `${hits.length} results in ${d.elapsed_ms} ms (${val("model").toUpperCase()}, ${val("level")} level)`
-      : `No results for "${q}". Try fewer or different words.` + (d.query_terms.length ? "" : " (Only stop words or symbols were entered.)");
+      ? `${hits.length} results in ${d.elapsed_ms} ms (${val("model").toUpperCase()}, ${val("level")} level${filt})`
+      : `No results for "${q}"` + (filt ? " with these filters. Try clearing a filter." : ". Try fewer or different words.") +
+        (d.query_terms.length ? "" : " (Only stop words or symbols were entered.)");
   } catch (e) {
     hits = []; $("#status").textContent = "Search failed. Please try again.";
   }
@@ -86,17 +193,60 @@ function render() {
   window.scrollTo({top: 0});
 }
 
+/* ---------- history page ---------- */
+let newestFirst = true;
+function showSearch() { $("#history-view").hidden = true; $("#search-view").hidden = false; }
+function showHistory() {
+  hideSuggest();
+  $("#search-view").hidden = true; $("#history-view").hidden = false;
+  renderHistory();
+}
+function renderHistory() {
+  const h = loadHistory().slice();
+  if (!newestFirst) h.reverse();
+  $("#sort-history").innerHTML = `Sort by <b>${newestFirst ? "Recent" : "Oldest"}</b> ${newestFirst ? "&#9661;" : "&#9651;"}`;
+  $("#history-empty").hidden = h.length > 0;
+  $("#clear-history").hidden = h.length === 0;
+  $("#history-list").innerHTML = h.map(x => `<li>
+    <button type="button" class="h-run" data-ts="${x.ts}"><span class="h-date">${fmtDate(x.ts)}</span>
+      <span class="h-q">${esc(x.q)}</span><span class="h-tags">${esc(x.level)} &middot; ${esc(x.model.toUpperCase())}</span></button>
+    <button type="button" class="h-del" data-ts="${x.ts}" aria-label="Delete search: ${esc(x.q)}">&times;</button></li>`).join("");
+}
+$("#open-history").addEventListener("click", showHistory);
+$("#close-history").addEventListener("click", showSearch);
+$("#sort-history").addEventListener("click", () => { newestFirst = !newestFirst; renderHistory(); });
+$("#clear-history").addEventListener("click", () => { if (confirm("Clear all search history?")) { saveHistory([]); renderHistory(); } });
+$("#history-list").addEventListener("click", e => {
+  const run = e.target.closest(".h-run"), del = e.target.closest(".h-del");
+  if (del) { saveHistory(loadHistory().filter(x => String(x.ts) !== del.dataset.ts)); renderHistory(); }
+  else if (run) {
+    const x = loadHistory().find(x => String(x.ts) === run.dataset.ts); if (!x) return;
+    $("#q").value = x.q;
+    const lv = document.querySelector(`input[name=level][value=${x.level}]`), md = document.querySelector(`input[name=model][value=${x.model}]`);
+    if (lv) lv.checked = true; if (md) md.checked = true;
+    search();
+  }
+});
+
+/* ---------- wiring ---------- */
 $("#form").addEventListener("submit", e => { e.preventDefault(); search(); });
-document.querySelectorAll("input[name=model],input[name=level]").forEach(el => el.addEventListener("change", () => search()));
+$$("input[name=model],input[name=level]").forEach(el => el.addEventListener("change", () => search(false)));
+$$("input[name=months],input[name=length]").forEach(el => el.addEventListener("change", () => { updateClear(); search(false); }));
+$("#clear-filters").addEventListener("click", () => {
+  $$("input[name=months],input[name=length]").forEach(el => el.checked = false);
+  updateClear(); search(false);
+});
 $("#pager").addEventListener("click", e => { if (e.target.dataset.p) { page = +e.target.dataset.p; render(); } });
-document.querySelectorAll(".examples button").forEach(b => b.addEventListener("click", () => { $("#q").value = b.textContent; search(); }));
+$$(".examples button").forEach(b => b.addEventListener("click", () => { $("#q").value = b.textContent; search(); }));
 
 const init = new URLSearchParams(location.search);
+const setChecks = (name, csv) => (csv || "").split(",").forEach(v => { const el = document.querySelector(`input[name=${name}][value="${CSS.escape(v)}"]`); if (el) el.checked = true; });
+setChecks("months", init.get("months")); setChecks("length", init.get("length")); updateClear();
 if (init.get("q")) {
   $("#q").value = init.get("q");
   const m = init.get("model"), l = init.get("level");
-  if (m) { const el = document.querySelector(`input[name=model][value=${m}]`); if (el) el.checked = true; }
-  if (l) { const el = document.querySelector(`input[name=level][value=${l}]`); if (el) el.checked = true; }
+  if (m) { const el = document.querySelector(`input[name=model][value="${CSS.escape(m)}"]`); if (el) el.checked = true; }
+  if (l) { const el = document.querySelector(`input[name=level][value="${CSS.escape(l)}"]`); if (el) el.checked = true; }
   search(false);
 }
 </script>

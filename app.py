@@ -47,10 +47,38 @@ def arxiv_url(paper_id: str) -> str:
     return f"https://arxiv.org/abs/{paper_id}"
 
 
-def run_query(q: str, model: str, level: str, k: int = 100) -> list[dict]:
+MONTHS = {"2408": "August 2024", "2409": "September 2024"}
+LENGTHS = ("short", "medium", "long")
+FILTER_FETCH = 1000  # candidates pulled before filtering, so filters still leave up to 100 results
+META: dict = {"counts": {}, "cuts": (0, 0)}
+
+
+def build_meta() -> None:
+    """Paragraph count per paper and the tercile cut points used for the length filter."""
+    counts: dict[str, int] = {}
+    for rec in api._paragraph_records.values():
+        counts[rec["paper_id"]] = counts.get(rec["paper_id"], 0) + 1
+    ordered = sorted(counts.values())
+    META["counts"] = counts
+    META["cuts"] = (ordered[len(ordered) // 3], ordered[2 * len(ordered) // 3]) if ordered else (0, 0)
+
+
+def length_bucket(paper_id: str) -> str:
+    n = META["counts"].get(paper_id, 0)
+    lo, hi = META["cuts"]
+    return "short" if n <= lo else "medium" if n <= hi else "long"
+
+
+def passes(paper_id: str, months: set[str], lengths: set[str]) -> bool:
+    return (not months or paper_id[:4] in months) and (not lengths or length_bucket(paper_id) in lengths)
+
+
+def run_query(q: str, model: str, level: str, k: int = 100,
+              months: set[str] = frozenset(), lengths: set[str] = frozenset()) -> list[dict]:
     terms = set(api.tokenize(q))
+    filtered = bool(months or lengths)
     rows = []
-    for hit in api.search(q, model=model, level=level, k=k):
+    for hit in api.search(q, model=model, level=level, k=FILTER_FETCH if filtered else k):
         if level == "paper":
             p = api.get_paper(hit["id"])
             body, para_id = p["abstract"], None
@@ -58,17 +86,25 @@ def run_query(q: str, model: str, level: str, k: int = 100) -> list[dict]:
             para = api.get_paragraph(hit["id"])
             p = api.get_paper(para["paper_id"])
             body, para_id = para["text"], para["para_id"]
+        if filtered and not passes(p["paper_id"], months, lengths):
+            continue
         rows.append({
-            "rank": hit["rank"], "score": round(hit["score"], 4), "paper_id": p["paper_id"], "para_id": para_id,
+            "rank": len(rows) + 1, "score": round(hit["score"], 4), "paper_id": p["paper_id"], "para_id": para_id,
             "title": p["title"] or p["paper_id"], "snippet_html": highlight(snippet(body, terms), terms),
             "arxiv": arxiv_url(p["paper_id"]),
         })
+        if len(rows) == k:
+            break
     return rows
 
 
 @app.route("/")
 def index():
-    return render_template("index.html", page_size=PAGE_SIZE, annotate=bool(CFG["queries_dir"]))
+    lo, hi = META["cuts"]
+    length_labels = {"short": f"Short (up to {lo} paragraphs)", "medium": f"Medium ({lo + 1}-{hi})",
+                     "long": f"Long (over {hi})"}
+    return render_template("index.html", page_size=PAGE_SIZE, annotate=bool(CFG["queries_dir"]),
+                           months=MONTHS, length_labels=length_labels)
 
 
 @app.route("/api/search")
@@ -80,8 +116,10 @@ def api_search():
         abort(400)
     if not q:
         return jsonify(results=[], elapsed_ms=0, query_terms=[])
+    months = {m for m in request.args.get("months", "").split(",") if m in MONTHS}
+    lengths = {x for x in request.args.get("length", "").split(",") if x in LENGTHS}
     t0 = time.perf_counter()
-    rows = run_query(q, model, level)
+    rows = run_query(q, model, level, months=months, lengths=lengths)
     return jsonify(results=rows, elapsed_ms=round((time.perf_counter() - t0) * 1000, 1), query_terms=api.tokenize(q))
 
 
@@ -124,6 +162,28 @@ def _load_labels() -> dict[str, tuple[str, int]]:
     return labels
 
 
+_TOP1: dict[str, str | None] = {}
+
+
+def _top_paragraph(qid: str, query: str) -> str | None:
+    """Top-1 paragraph ID for a Test query.
+
+    Taken from the submitted run file when present (instant, and exactly what was
+    submitted); otherwise searched once and kept in memory.
+    """
+    if not _TOP1:
+        run = Path("Retrieval Results") / f"{CFG['team']}_paragraph_{CFG['best_model']}_test.tsv"
+        if run.exists():
+            for line in run.read_text(encoding="utf-8").splitlines():
+                parts = line.split()
+                if len(parts) == 6 and parts[3] == "1":
+                    _TOP1[parts[0]] = parts[2]
+    if qid not in _TOP1:
+        hits = api.search(query, model=CFG["best_model"], level="paragraph", k=1)
+        _TOP1[qid] = hits[0]["id"] if hits else None
+    return _TOP1[qid]
+
+
 @app.route("/annotate")
 def annotate():
     if not CFG["queries_dir"]:
@@ -131,10 +191,10 @@ def annotate():
     labels = _load_labels()
     items = []
     for q in pipeline.load_queries(Path(CFG["queries_dir"]) / "Test.json"):
-        hits = api.search(q["query"], model=CFG["best_model"], level="paragraph", k=1)
-        if not hits:
+        para_id = _top_paragraph(q["query_id"], q["query"])
+        if para_id is None:
             continue
-        para = api.get_paragraph(hits[0]["id"])
+        para = api.get_paragraph(para_id)
         label = labels.get(q["query_id"])
         items.append({"qid": q["query_id"], "query": q["query"], "para_id": para["para_id"],
                       "paper_id": para["paper_id"], "text": para["text"],
@@ -170,6 +230,7 @@ def main() -> None:
     args = ap.parse_args()
     CFG.update(queries_dir=args.queries_dir, team=args.team, best_model=args.best_model)
     pipeline.build_system(args.data_dir, args.cache, args.rebuild)
+    build_meta()
     app.run(host=args.host, port=args.port, debug=False)
 
 

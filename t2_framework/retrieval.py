@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import heapq
 from dataclasses import dataclass
 from typing import Callable, Dict, Hashable, Mapping, Optional, Sequence, Tuple, List
 
@@ -92,13 +93,9 @@ def rank_scores(scores: Mapping[DocId, float], top_k: int = 100) -> List[Result]
         raise ValueError("top_k cannot be negative")
     if top_k == 0:
         return []
-    valid_scores = [
-        (doc_id, float(score))
-        for doc_id, score in scores.items()
-        if score is not None and float(score) > 0.0
-    ]
-    valid_scores.sort(key=lambda pair: (-pair[1], str(pair[0])))
-    return valid_scores[:top_k]
+    # Heap selection gives the same order as a full sort (score desc, ID asc) without sorting every candidate.
+    positive = ((doc_id, float(score)) for doc_id, score in scores.items() if score is not None and float(score) > 0.0)
+    return heapq.nsmallest(top_k, positive, key=lambda pair: (-pair[1], str(pair[0])))
 
 
 class SearchEngine:
