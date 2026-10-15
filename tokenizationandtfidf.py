@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 import nltk
 from nltk.corpus import stopwords
 
+
 try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
