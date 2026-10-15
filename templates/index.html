@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arXiv Search</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>arXiv Paper Search
+    {% if annotate %}<nav style="display:inline"><a href="{{ url_for('annotate') }}">Annotate</a></nav>{% endif %}
+  </h1>
+  <form class="bar" id="form" role="search">
+    <input type="search" id="q" name="q" placeholder="Search Aug-Sep 2024 arXiv papers, e.g. diffusion model image editing" autofocus aria-label="Search query">
+    <button class="go" type="submit">Search</button>
+  </form>
+  <div class="opts">
+    <span>Results as
+      <span class="seg" role="radiogroup" aria-label="Result level">
+        <input type="radio" name="level" id="lv-paper" value="paper" checked><label for="lv-paper">Papers</label>
+        <input type="radio" name="level" id="lv-para" value="paragraph"><label for="lv-para">Paragraphs</label>
+      </span>
+    </span>
+    <span>Model
+      <span class="seg" role="radiogroup" aria-label="Ranking model">
+        <input type="radio" name="model" id="m-bm25" value="bm25" checked><label for="m-bm25">BM25</label>
+        <input type="radio" name="model" id="m-tfidf" value="tfidf"><label for="m-tfidf">TF-IDF</label>
+      </span>
+    </span>
+  </div>
+  <div class="examples">Try:
+    <button type="button">retrieval augmented generation for question answering</button>
+    <button type="button">graph neural network node classification</button>
+    <button type="button">quantization of large language models</button>
+  </div>
+</header>
+<main>
+  <div id="status" role="status" aria-live="polite"></div>
+  <div id="results"></div>
+  <div class="pager" id="pager"></div>
+</main>
+<script>
+const PAGE = {{ page_size }};
+let hits = [], page = 1, lastQ = "";
+const $ = s => document.querySelector(s);
+const val = n => document.querySelector(`input[name=${n}]:checked`).value;
+const esc = s => s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function search(pushState = true) {
+  const q = $("#q").value.trim();
+  if (!q) return;
+  lastQ = q; page = 1;
+  $("#status").textContent = "Searching...";
+  const params = new URLSearchParams({q, model: val("model"), level: val("level")});
+  if (pushState) history.replaceState(null, "", "?" + params);
+  try {
+    const r = await fetch("/api/search?" + params);
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    hits = d.results;
+    $("#status").textContent = hits.length
+      ? `${hits.length} results in ${d.elapsed_ms} ms (${val("model").toUpperCase()}, ${val("level")} level)`
+      : `No results for "${q}". Try fewer or different words.` + (d.query_terms.length ? "" : " (Only stop words or symbols were entered.)");
+  } catch (e) {
+    hits = []; $("#status").textContent = "Search failed. Please try again.";
+  }
+  render();
+}
+
+function render() {
+  const start = (page - 1) * PAGE;
+  $("#results").innerHTML = hits.slice(start, start + PAGE).map(h => {
+    const para = h.para_id ? `&para=${encodeURIComponent(h.para_id)}#${encodeURIComponent(h.para_id)}` : "";
+    const where = h.para_id ? `Paragraph ${esc(h.para_id)} &middot; ` : "";
+    return `<article class="card">
+      <h2><a href="/paper/${h.paper_id}?q=${encodeURIComponent(lastQ)}${para}">${esc(h.title)}</a></h2>
+      <div class="meta">#${h.rank} &middot; ${where}${h.paper_id} &middot; score ${h.score}</div>
+      <p>${h.snippet_html}</p>
+      <div class="links"><a href="/paper/${h.paper_id}?q=${encodeURIComponent(lastQ)}${para}">Read in full</a>
+        <a href="${h.arxiv}" target="_blank" rel="noopener">arXiv &#8599;</a></div></article>`;
+  }).join("");
+  const pages = Math.ceil(hits.length / PAGE);
+  $("#pager").innerHTML = pages > 1 ? Array.from({length: pages}, (_, i) =>
+    `<button ${i + 1 === page ? 'aria-current="true"' : ""} data-p="${i + 1}">${i + 1}</button>`).join("") : "";
+  window.scrollTo({top: 0});
+}
+
+$("#form").addEventListener("submit", e => { e.preventDefault(); search(); });
+document.querySelectorAll("input[name=model],input[name=level]").forEach(el => el.addEventListener("change", () => search()));
+$("#pager").addEventListener("click", e => { if (e.target.dataset.p) { page = +e.target.dataset.p; render(); } });
+document.querySelectorAll(".examples button").forEach(b => b.addEventListener("click", () => { $("#q").value = b.textContent; search(); }));
+
+const init = new URLSearchParams(location.search);
+if (init.get("q")) {
+  $("#q").value = init.get("q");
+  const m = init.get("model"), l = init.get("level");
+  if (m) { const el = document.querySelector(`input[name=model][value=${m}]`); if (el) el.checked = true; }
+  if (l) { const el = document.querySelector(`input[name=level][value=${l}]`); if (el) el.checked = true; }
+  search(false);
+}
+</script>
+</body>
+</html>

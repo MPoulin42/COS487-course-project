@@ -1,3 +1,33 @@
+# Quick start
+
+```bash
+bash install.sh                                   # conda env "ir-part1" + NLTK stopwords
+conda activate ir-part1
+
+# Search interface (http://127.0.0.1:5000). First start indexes the collection and writes index_cache.pkl.
+bash run.sh app /mnt/netstore1_datasets/IR26/<paper_json_dir>
+
+# All eight Study/Test result files (+ metrics and significance tests if qrels are given)
+bash run.sh experiments DATA_DIR QUERIES_DIR TEAM [Study_paper_qrel.tsv Study_paragraph_qrel.tsv]
+```
+
+Result files go to `Retrieval Results/` using the exact names from the assignment. Average search time per
+query is printed and saved to `search_times.json`.
+
+To label the top paragraph of each Test query (the `TEAM_qrel_part1_test.tsv` deliverable), start the app with
+`python app.py --data-dir DATA --queries-dir QUERIES --team TEAM --best-model bm25` and open `/annotate`.
+Labels are saved on every click.
+
+| File | Role |
+| --- | --- |
+| `tokenizationandtfidf.py` | T1 tokenizer (`tokenize`) |
+| `t2_framework/` | T2 TF-IDF / BM25 scoring and the public `search` API |
+| `pipeline.py` | Loads per-paper JSON, builds paper/paragraph indexes (cached), configures the API |
+| `app.py`, `templates/`, `static/` | Flask search interface and annotation page |
+| `run_experiments.py`, `eval_metrics.py` | Result-file generation and evaluation |
+
+Paper-level documents index title + abstract; paragraph-level documents index each paragraph.
+
 # COS487 T2 Retrieval API
 
 T2 owns the scoring and ranking layer. T1 owns document extraction, tokenization, and index/statistics construction. T4 imports the public interface directly from `t2_framework/retrieval.py`; a separate `api.py` wrapper is unnecessary.

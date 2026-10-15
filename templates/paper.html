@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ paper.title or paper.paper_id }}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header><nav><a href="javascript:history.back()" style="margin:0">&larr; Back to results</a></nav></header>
+<main>
+  <h1 style="margin-top:14px">{{ paper.title or paper.paper_id }}</h1>
+  <div class="meta">{{ paper.paper_id }} &middot; <a href="{{ arxiv }}" target="_blank" rel="noopener">arXiv &#8599;</a></div>
+  <h2>Abstract</h2>
+  <p class="abstract">{{ paper.abstract }}</p>
+  <h2>Paragraphs ({{ paras|length }})</h2>
+  {% for p in paras %}
+  <div class="para{% if p.id == focus %} focus{% endif %}" id="{{ p.id }}">
+    <div class="meta">{{ p.id }}</div>{{ p.html|safe }}
+  </div>
+  {% endfor %}
+</main>
+</body>
+</html>

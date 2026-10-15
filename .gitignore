@@ -1,0 +1,8 @@
+__pycache__/
+*.pkl
+search_times.json
+*_per_query.csv
+*_summary.csv
+*_sig.csv
+data/
+Retrieval Results/

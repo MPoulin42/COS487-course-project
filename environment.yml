@@ -1,0 +1,10 @@
+name: ir-part1
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - flask
+      - beautifulsoup4
+      - nltk
