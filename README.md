@@ -129,7 +129,7 @@ From the project directory:
 python -m unittest discover -s tests -v
 ```
 
-The tests use small declared fixtures to test contracts and file formats. They do not validate retrieval quality over the real corpus.
+The tests use small declared fixtures to test contracts and file formats. They do not validate retrieval quality over the real corpus
 
 ## TREC output
 
