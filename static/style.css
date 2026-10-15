@@ -45,3 +45,37 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 .rel button { padding: 6px 14px; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 6px; cursor: pointer; }
 .rel button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 @media (max-width: 560px) { .bar { flex-direction: column; } }
+
+/* sidebar layout, filters, history */
+header.wide { max-width: 1120px; }
+.layout { max-width: 1120px; margin: 0 auto; padding: 0 16px; display: grid; grid-template-columns: 220px 1fr; gap: 24px; align-items: start; }
+.layout main { max-width: none; padding: 0; min-width: 0; }
+aside { position: sticky; top: 16px; }
+.filters { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.filters h2 { font-size: 1.05rem; margin: 0 0 8px; text-align: center; }
+.filters fieldset { border: 0; margin: 0 0 10px; padding: 0; }
+.filters legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 0; margin-bottom: 4px; }
+.chk { display: flex; gap: 8px; align-items: center; padding: 3px 0; cursor: pointer; font-size: .92rem; }
+.linkbtn { background: none; border: 0; padding: 4px 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
+.linkbtn.big { margin-top: 14px; font-size: 1.05rem; }
+.combo { position: relative; flex: 1; display: flex; }
+.combo input { flex: 1; }
+#suggest { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 10; list-style: none; margin: 0; padding: 4px 0;
+           background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.15); }
+#suggest li { padding: 8px 12px; cursor: pointer; }
+#suggest li.active, #suggest li[role=option]:hover { background: var(--bg); }
+#suggest .sg-head { cursor: default; color: var(--muted); font-size: .82rem; text-transform: uppercase; letter-spacing: .04em; }
+#history-view h2 { margin: 6px 0 4px; }
+.hist-tools { display: flex; justify-content: space-between; margin-bottom: 8px; }
+#history-list { list-style: none; margin: 0; padding: 0; }
+#history-list li { display: flex; gap: 6px; align-items: stretch; margin-bottom: 6px; }
+.h-run { flex: 1; text-align: left; display: grid; grid-template-columns: 11.5em 1fr auto; gap: 10px; align-items: baseline;
+         padding: 9px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; color: var(--text); cursor: pointer; font: inherit; }
+.h-run:hover { border-color: var(--accent); }
+.h-date, .h-tags { color: var(--muted); font-size: .82rem; }
+.h-del { width: 36px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; color: var(--muted); cursor: pointer; font-size: 1.2rem; }
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; }
+  aside { position: static; }
+  .h-run { grid-template-columns: 1fr; gap: 2px; }
+}
