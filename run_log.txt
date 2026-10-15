@@ -1,6 +1,7 @@
 Loaded qrels for 250 queries from data/Study_paper_qrel.tsv
 Loaded 250 queries from data\Study.json
 
+
 === Mean metrics ===
 run                               nDCG        nDCG@5   MRR_lenient    MRR_strict   P@5_lenient    P@5_strict  P@10_lenient   P@10_strict
 NJMB_paper_tfidf_study          0.3440        0.2956        0.3081        0.2863        0.0912        0.0760        0.0512        0.0428
