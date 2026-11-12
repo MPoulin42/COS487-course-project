@@ -85,12 +85,11 @@ Both models train for 3 epochs with AdamW, learning rate $2\times10^{-5}$, 10\% 
 
 \subsection{System and interface}
 One retrieval interface serves all models: \texttt{search(query, model, level, k)} returns BM25 results from the Part 1 indexes and neural results from the GPU indexes in the same format, so the experiment runner, the evaluation script and the Flask interface treat all models alike. The interface keeps its Part 1 features (Figure~\ref{fig:ui}): highlighted snippets, filters by submission month and paper length, search history, and full-text paper pages. The model toggle now also offers Dense and SPLADE whenever their indexes are available. Because 60\% of paragraphs contain inline LaTeX, result snippets, paper pages and the annotation page now render math with KaTeX; query-term highlighting skips formulas, and snippets are widened so they never cut a formula in half. The annotation page can run in a lightweight mode that loads only the papers it needs, instead of the 2.4\,GB BM25 index.
-\todo{Replace interface.png with a Part 2 screenshot showing the Dense/SPLADE model toggle and rendered math.}
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{interface.png}
-\caption{The search interface: filter panel and search-history link (left), query box with model and level toggles (top), and highlighted results.}
+\caption{The search interface with the dense model at the paragraph level: filter panel and search-history link (left), query box with level and model toggles (top), and results with highlighted query terms and rendered LaTeX. The query is Study query 2085; the rank-1 paragraph is the judged relevant one, which BM25 does not retrieve. (The reported time includes GPU warm-up for the first query.)}
 \label{fig:ui}
 \end{figure}
 
