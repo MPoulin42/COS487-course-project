@@ -17,7 +17,9 @@ import re
 import time
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, render_template, request
+import json
+
+from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
 
 import pipeline
 
@@ -41,22 +43,68 @@ PAGE_SIZE = 10
 SNIPPET_CHARS = 420
 _WORD = re.compile(r"[A-Za-z]+")
 _BY_PAPER: dict[str, list[dict]] = {}  # paper_id -> its paragraph records, built on first paper view
+# --annotate-only: just the papers whose paragraphs are being labelled, read straight from their JSON
+# files, so the app runs in a few hundred MB instead of loading the full BM25/TF-IDF index.
+_LOCAL: dict[str, dict] = {}
+
+
+def _get_paper(paper_id: str) -> dict:
+    return dict(_LOCAL[paper_id]) if _LOCAL else api.get_paper(paper_id)
+
+
+def _get_paragraph(para_id: str) -> dict:
+    if not _LOCAL:
+        return api.get_paragraph(para_id)
+    paper_id = para_id.rsplit("_", 1)[0]
+    return {"para_id": para_id, "paper_id": paper_id, "text": _LOCAL[paper_id]["paragraphs"][para_id]}
+
+
+def _tokenize(text: str) -> list[str]:
+    return pipeline.tokenize(text) if _LOCAL else api.tokenize(text)
+
+
+def load_annotation_papers(data_dir: str, run: Path) -> None:
+    """Read only the papers that contain a top-1 paragraph in the best model's Test run."""
+    paper_ids = {line.split()[2].rsplit("_", 1)[0] for line in run.read_text(encoding="utf-8").splitlines()
+                 if len(line.split()) == 6 and line.split()[3] == "1"}
+    for pid in paper_ids:
+        rec = json.loads((Path(data_dir) / f"{pid}.json").read_text(encoding="utf-8"))
+        _LOCAL[pid] = {"paper_id": pid, "title": str(rec.get("title") or ""),
+                       "abstract": str(rec.get("abstract") or ""),
+                       "paragraphs": pipeline._normalize_paragraphs(rec["paragraphs"], pid)}
+
+
+# Inline/display LaTeX as it appears in the paper text; the pages render it with KaTeX (static/math.js).
+_MATH = re.compile(r"\$\$.+?\$\$|\$[^$]+?\$|\\\(.+?\\\)|\\\[.+?\\\]", re.S)
 
 
 def highlight(text: str, terms: set[str]) -> str:
-    """HTML-escape text and wrap query-term matches in <mark>."""
-    safe = html.escape(text)
+    """HTML-escape text and wrap query-term matches in <mark>, leaving LaTeX math untouched
+    (a <mark> inside a formula would split it and stop it from rendering)."""
     if not terms:
-        return safe
-    return _WORD.sub(lambda m: f"<mark>{m.group(0)}</mark>" if m.group(0).lower() in terms else m.group(0), safe)
+        return html.escape(text)
+    out, last = [], 0
+    for m in list(_MATH.finditer(text)) + [None]:
+        prose = text[last:m.start() if m else len(text)]
+        out.append(_WORD.sub(lambda w: f"<mark>{w.group(0)}</mark>" if w.group(0).lower() in terms else w.group(0),
+                             html.escape(prose)))
+        if m:
+            out.append(html.escape(m.group(0)))
+            last = m.end()
+    return "".join(out)
 
 
 def snippet(text: str, terms: set[str], width: int = SNIPPET_CHARS) -> str:
-    """Window of text around the first query-term hit."""
+    """Window of text around the first query-term hit, widened so it never cuts a formula in half."""
     first = next((m.start() for m in _WORD.finditer(text) if m.group(0).lower() in terms), 0)
     start = max(0, first - width // 4)
-    piece = text[start:start + width]
-    return ("..." if start else "") + piece + ("..." if start + width < len(text) else "")
+    end = start + width
+    for m in _MATH.finditer(text):
+        if m.start() < start < m.end():
+            start = m.start()
+        if m.start() < end < m.end():
+            end = m.end()
+    return ("..." if start else "") + text[start:end] + ("..." if end < len(text) else "")
 
 
 def arxiv_url(paper_id: str) -> str:
@@ -116,6 +164,8 @@ def run_query(q: str, model: str, level: str, k: int = 100,
 
 @app.route("/")
 def index():
+    if _LOCAL:
+        return redirect(url_for("annotate"))
     lo, hi = META["cuts"]
     length_labels = {"short": f"Short (up to {lo} paragraphs)", "medium": f"Medium ({lo + 1}-{hi})",
                      "long": f"Long (over {hi})"}
@@ -143,10 +193,10 @@ def api_search():
 @app.route("/paper/<paper_id>")
 def paper_page(paper_id):
     try:
-        paper = api.get_paper(paper_id)
+        paper = _get_paper(paper_id)
     except KeyError:
         abort(404)
-    terms = set(api.tokenize(request.args.get("q", "")))
+    terms = set(_tokenize(request.args.get("q", "")))
     paras = [{"id": pid, "html": highlight(text, terms)} for pid, text in _paragraphs_of(paper_id)]
     return render_template("paper.html", paper=paper, paras=paras, arxiv=arxiv_url(paper_id),
                            focus=request.args.get("para", ""))
@@ -154,6 +204,8 @@ def paper_page(paper_id):
 
 def _paragraphs_of(paper_id: str):
     """Paragraph (id, text) pairs of one paper in document order (IDs are <paper_id>_<n>)."""
+    if _LOCAL:
+        return list(_LOCAL[paper_id]["paragraphs"].items())
     if not _BY_PAPER:
         for r in api._paragraph_records.values():
             _BY_PAPER.setdefault(r["paper_id"], []).append(r)
@@ -211,7 +263,7 @@ def annotate():
         para_id = _top_paragraph(q["query_id"], q["query"])
         if para_id is None:
             continue
-        para = api.get_paragraph(para_id)
+        para = _get_paragraph(para_id)
         label = labels.get(q["query_id"])
         items.append({"qid": q["query_id"], "query": q["query"], "para_id": para["para_id"],
                       "paper_id": para["paper_id"], "text": para["text"],
@@ -262,15 +314,29 @@ def main() -> None:
     ap.add_argument("--sparse-checkpoint", default="models/sparse/final")
     ap.add_argument("--sparse-index", default="indexes/sparse")
     ap.add_argument("--no-neural", action="store_true", help="serve only the Part 1 models")
+    ap.add_argument("--annotate-only", action="store_true",
+                    help="serve only /annotate from the best model's Test run file; loads just the papers it "
+                         "needs instead of the full index (for machines with little RAM)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5000)
     args = ap.parse_args()
     CFG.update(queries_dir=args.queries_dir, team=args.team, best_model=args.best_model, part=args.part)
+    if args.annotate_only:
+        best_run = Path("Retrieval Results") / f"{args.team}_paragraph_{args.best_model}_test.tsv"
+        if not args.queries_dir or not best_run.exists():
+            ap.error(f"--annotate-only needs --queries-dir and {best_run}")
+        load_annotation_papers(args.data_dir, best_run)
+        print(f"Annotate-only: loaded {len(_LOCAL)} papers from {best_run}")
+        app.run(host=args.host, port=args.port, debug=False)
+        return
     pipeline.build_system(args.data_dir, args.cache, args.rebuild)
     if not args.no_neural:
         load_neural(args)
-    if args.best_model not in available_models():
-        ap.error(f"--best-model {args.best_model} is not loaded")
+    # Annotation only needs the best model's Test run file, so the model itself may be absent
+    # (e.g. labelling locally after the neural runs were made on a GPU server).
+    best_run = Path("Retrieval Results") / f"{args.team}_paragraph_{args.best_model}_test.tsv"
+    if args.best_model not in available_models() and not (args.queries_dir and best_run.exists()):
+        ap.error(f"--best-model {args.best_model} is not loaded and {best_run} does not exist")
     build_meta()
     app.run(host=args.host, port=args.port, debug=False)
 
