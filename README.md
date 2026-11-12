@@ -1,32 +1,65 @@
 # Quick start
 
 ```bash
-bash install.sh                                   # conda env "ir-part1" + NLTK stopwords
-conda activate ir-part1
+bash install.sh                                   # conda env "ir-project" + NLTK stopwords
+conda activate ir-project
+export HF_HOME=/path/to/your/netstore/hf_cache    # CS servers: keep model downloads off the home quota
 
-# Search interface (http://127.0.0.1:5000). First start indexes the collection and writes index_cache.pkl.
-bash run.sh app /mnt/netstore1_datasets/IR26/<paper_json_dir>
+# Part 2 (GPU): fine-tune both neural models, encode the collection, write the 8 result files, evaluate
+bash run.sh part2 DATA_DIR QUERIES_DIR TEAM
 
-# All eight Study/Test result files (+ metrics and significance tests if qrels are given)
+# Part 1: all eight TF-IDF/BM25 Study/Test result files (+ metrics and significance tests if qrels are given)
 bash run.sh experiments DATA_DIR QUERIES_DIR TEAM [Study_paper_qrel.tsv Study_paragraph_qrel.tsv]
+
+# Search interface (http://127.0.0.1:5000): BM25, TF-IDF, and the Part 2 models once their indexes exist
+bash run.sh app DATA_DIR [QUERIES_DIR TEAM]
 ```
 
-Result files go to `Retrieval Results/` using the exact names from the assignment. Average search time per
-query is printed and saved to `search_times.json`.
+`DATA_DIR` is the folder of per-paper JSON files; `QUERIES_DIR` holds `Train.json`, `Study.json`, `Test.json` and
+the `Train_*`/`Study_*` qrel files. Result files go to `Retrieval Results/` using the exact names from the assignment.
 
-To label the top paragraph of each Test query (the `TEAM_qrel_part1_test.tsv` deliverable), start the app with
-`python app.py --data-dir DATA --queries-dir QUERIES --team TEAM --best-model bm25` and open `/annotate`.
-Labels are saved on every click.
+## Part 2: neural retrieval
+
+| Step | Command (run by `bash run.sh part2`) | Output |
+| --- | --- | --- |
+| Clean corpus | `python -m neural.corpus --data-dir DATA` | `neural_cache/corpus.pkl` |
+| Training triples (Train split only, 90/10 by query) | `python -m neural.build_training_data --queries-dir Q` | `neural_cache/triples/{train,val}.jsonl` |
+| Fine-tune dense model | `python -m neural.train --model dense --out models/dense` | `models/dense/final`, `loss.png`, `loss_history.json` |
+| Fine-tune SPLADE | `python -m neural.train --model sparse --out models/sparse` | `models/sparse/final`, `loss.png`, `loss_history.json` |
+| Encode collection (resumable shards) | `python -m neural.encode --model dense\|sparse --checkpoint ... --index ...` | `indexes/{dense,sparse}/{paper,paragraph}/` |
+| Result files + evaluation | `python run_part2.py --queries-dir Q --team TEAM` | `Retrieval Results/TEAM_{paper,paragraph}_{dense,sparse}_{study,test}.tsv`, `part2_*_{summary,sig,per_query}.csv`, `search_times_part2.json` |
+
+* **Dense**: `sentence-transformers/all-distilroberta-v1` bi-encoder fine-tuned with MultipleNegativesRankingLoss
+  (in-batch negatives + one hard negative per pair); exact cosine search over float16 embeddings.
+* **Sparse**: SPLADE `naver/splade_v2_max` fine-tuned with SpladeLoss (sparse MNRL + FLOPS regularisation);
+  document vectors capped at 256 terms and stored as an inverted index (CSC matrix).
+* **Pre-processing**: title metadata ("DOI:", "Preprint:", "Thanks:" ...) stripped, HTML entities and whitespace
+  normalised, paragraphs under 25 characters left out of the paragraph index; duplicate checklist boilerplate is kept
+  because some queries target it (`neural/corpus.py`).
+* **Hard negatives**: a non-relevant paragraph from the same paper (paragraph pairs); a paper ranked 10-50 by the
+  untuned dense model (paper pairs).
+* **Evaluation** compares Part 1 BM25, dense and SPLADE on Study with every metric and paired t-tests plus
+  randomization tests between every pair (`eval_metrics.py`).
+
+To label the top paragraph of each Test query for the best model (the `TEAM_qrel_part2_test.tsv` deliverable), start
+the app with `python app.py --data-dir DATA --queries-dir QUERIES --team TEAM --best-model dense` (or `sparse`) and open
+`/annotate`. Labels are saved on every click.
 
 | File | Role |
 | --- | --- |
-| `tokenizationandtfidf.py` | T1 tokenizer (`tokenize`) |
-| `t2_framework/` | T2 TF-IDF / BM25 scoring and the public `search` API |
+| `tokenizationandtfidf.py` | Part 1 tokenizer (`tokenize`) |
+| `t2_framework/` | Part 1 TF-IDF / BM25 scoring and the public `search` API |
 | `pipeline.py` | Loads per-paper JSON, builds paper/paragraph indexes (cached), configures the API |
+| `neural/` | Part 2 corpus cleaning, training data, fine-tuning, encoding, dense/sparse retrievers |
 | `app.py`, `templates/`, `static/` | Flask search interface and annotation page |
-| `run_experiments.py`, `eval_metrics.py` | Result-file generation and evaluation |
+| `run_experiments.py`, `run_part2.py`, `eval_metrics.py` | Result-file generation and evaluation |
 
-Paper-level documents index title + abstract; paragraph-level documents index each paragraph.
+Paper-level documents are title + abstract; paragraph-level documents are single paragraphs.
+
+## Contributions
+
+* Part 1: Nicolas Borelli, Jobe Odulio, Mathieu Poulin, Brady Roy (see git history).
+* Part 2: Mathieu Poulin (neural retrieval pipeline, experiments, interface, report).
 
 # COS487 T2 Retrieval API
 

@@ -1,10 +1,21 @@
-name: ir-part1
+name: ir-project
 channels:
   - conda-forge
 dependencies:
   - python=3.11
   - pip
   - pip:
+      # Part 1
       - flask
       - beautifulsoup4
       - nltk
+      # Part 2 (neural retrieval). The default PyPI torch wheel for Linux bundles CUDA.
+      - torch>=2.4
+      - sentence-transformers==6.2.0
+      - transformers==5.5.0
+      - huggingface-hub>=1.5,<2
+      - datasets>=3.6
+      - accelerate>=1.2
+      - numpy
+      - scipy
+      - matplotlib

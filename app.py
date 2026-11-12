@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Search interface for the arXiv collection (TF-IDF / BM25, paper and paragraph level).
+"""Search interface for the arXiv collection (paper and paragraph level).
 
-    python app.py --data-dir DATA [--queries-dir QUERIES --team TEAM]
+Models: TF-IDF and BM25 (Part 1); fine-tuned dense bi-encoder and SPLADE (Part 2), loaded
+when their model and index folders exist (see neural/).
 
-Pages: /  search,  /paper/<id>  full paper,  /annotate  Part 1 qrel annotation (needs --queries-dir).
+    python app.py --data-dir DATA [--queries-dir QUERIES --team TEAM --best-model dense]
+
+Pages: /  search,  /paper/<id>  full paper,  /annotate  Test-query qrel annotation (needs --queries-dir).
 """
 
 from __future__ import annotations
@@ -20,7 +23,20 @@ import pipeline
 
 app = Flask(__name__)
 api = pipeline.api
-CFG = {"queries_dir": None, "team": "team", "best_model": "bm25"}
+CFG = {"queries_dir": None, "team": "team", "best_model": "bm25", "part": 2}
+NEURAL: dict = {}  # "dense"/"sparse" -> neural.retrievers retriever, filled in main()
+MODEL_LABELS = {"bm25": "BM25", "tfidf": "TF-IDF", "dense": "Dense", "sparse": "SPLADE"}
+
+
+def search(q: str, model: str, level: str, k: int) -> list[dict]:
+    """One entry point for the lexical (Part 1) and neural (Part 2) models."""
+    if model in NEURAL:
+        return NEURAL[model].search(q, level=level, k=k)
+    return api.search(q, model=model, level=level, k=k)
+
+
+def available_models() -> list[str]:
+    return ["bm25", "tfidf"] + [m for m in ("dense", "sparse") if m in NEURAL]
 PAGE_SIZE = 10
 SNIPPET_CHARS = 420
 _WORD = re.compile(r"[A-Za-z]+")
@@ -78,7 +94,7 @@ def run_query(q: str, model: str, level: str, k: int = 100,
     terms = set(api.tokenize(q))
     filtered = bool(months or lengths)
     rows = []
-    for hit in api.search(q, model=model, level=level, k=FILTER_FETCH if filtered else k):
+    for hit in search(q, model, level, FILTER_FETCH if filtered else k):
         if level == "paper":
             p = api.get_paper(hit["id"])
             body, para_id = p["abstract"], None
@@ -104,7 +120,8 @@ def index():
     length_labels = {"short": f"Short (up to {lo} paragraphs)", "medium": f"Medium ({lo + 1}-{hi})",
                      "long": f"Long (over {hi})"}
     return render_template("index.html", page_size=PAGE_SIZE, annotate=bool(CFG["queries_dir"]),
-                           months=MONTHS, length_labels=length_labels)
+                           months=MONTHS, length_labels=length_labels,
+                           models=[(m, MODEL_LABELS[m]) for m in available_models()])
 
 
 @app.route("/api/search")
@@ -112,7 +129,7 @@ def api_search():
     q = request.args.get("q", "").strip()
     model = request.args.get("model", "bm25")
     level = request.args.get("level", "paper")
-    if model not in ("bm25", "tfidf") or level not in ("paper", "paragraph"):
+    if model not in available_models() or level not in ("paper", "paragraph"):
         abort(400)
     if not q:
         return jsonify(results=[], elapsed_ms=0, query_terms=[])
@@ -146,10 +163,10 @@ def _paragraphs_of(paper_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Part 1 data annotation: top retrieved paragraph per Test query
+# Data annotation: top retrieved paragraph per Test query (best model of the current part)
 # ---------------------------------------------------------------------------
 def _qrel_path() -> Path:
-    return Path(f"{CFG['team']}_qrel_part1_test.tsv")
+    return Path(f"{CFG['team']}_qrel_part{CFG['part']}_test.tsv")
 
 
 def _load_labels() -> dict[str, tuple[str, int]]:
@@ -179,7 +196,7 @@ def _top_paragraph(qid: str, query: str) -> str | None:
                 if len(parts) == 6 and parts[3] == "1":
                     _TOP1[parts[0]] = parts[2]
     if qid not in _TOP1:
-        hits = api.search(query, model=CFG["best_model"], level="paragraph", k=1)
+        hits = search(query, CFG["best_model"], "paragraph", 1)
         _TOP1[qid] = hits[0]["id"] if hits else None
     return _TOP1[qid]
 
@@ -217,6 +234,19 @@ def save_annotation():
     return jsonify(ok=True, saved=len(labels))
 
 
+def load_neural(args) -> None:
+    """Load each Part 2 retriever whose fine-tuned model and index both exist."""
+    from neural.retrievers import make_retriever
+
+    for kind in ("dense", "sparse"):
+        ckpt, index = getattr(args, f"{kind}_checkpoint"), getattr(args, f"{kind}_index")
+        if Path(ckpt).exists() and (Path(index) / "paper" / "ids.json").exists():
+            NEURAL[kind] = make_retriever(kind, ckpt, index)
+            print(f"Loaded {kind} retriever on {NEURAL[kind].device}")
+        else:
+            print(f"Skipping {kind} model: {ckpt} or {index} not found")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", required=True)
@@ -224,12 +254,23 @@ def main() -> None:
     ap.add_argument("--rebuild", action="store_true")
     ap.add_argument("--queries-dir", help="enables the /annotate page (needs Test.json)")
     ap.add_argument("--team", default="team")
-    ap.add_argument("--best-model", default="bm25", choices=["bm25", "tfidf"])
+    ap.add_argument("--best-model", default="bm25", choices=["bm25", "tfidf", "dense", "sparse"],
+                    help="model whose top paragraph per Test query is annotated")
+    ap.add_argument("--part", type=int, default=2, help="project part, used in the qrel file name")
+    ap.add_argument("--dense-checkpoint", default="models/dense/final")
+    ap.add_argument("--dense-index", default="indexes/dense")
+    ap.add_argument("--sparse-checkpoint", default="models/sparse/final")
+    ap.add_argument("--sparse-index", default="indexes/sparse")
+    ap.add_argument("--no-neural", action="store_true", help="serve only the Part 1 models")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5000)
     args = ap.parse_args()
-    CFG.update(queries_dir=args.queries_dir, team=args.team, best_model=args.best_model)
+    CFG.update(queries_dir=args.queries_dir, team=args.team, best_model=args.best_model, part=args.part)
     pipeline.build_system(args.data_dir, args.cache, args.rebuild)
+    if not args.no_neural:
+        load_neural(args)
+    if args.best_model not in available_models():
+        ap.error(f"--best-model {args.best_model} is not loaded")
     build_meta()
     app.run(host=args.host, port=args.port, debug=False)
 

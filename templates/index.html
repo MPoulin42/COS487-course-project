@@ -52,8 +52,9 @@
         </span>
         <span>Model
           <span class="seg" role="radiogroup" aria-label="Ranking model">
-            <input type="radio" name="model" id="m-bm25" value="bm25" checked><label for="m-bm25">BM25</label>
-            <input type="radio" name="model" id="m-tfidf" value="tfidf"><label for="m-tfidf">TF-IDF</label>
+            {% for value, label in models %}
+            <input type="radio" name="model" id="m-{{ value }}" value="{{ value }}"{% if loop.first %} checked{% endif %}><label for="m-{{ value }}">{{ label }}</label>
+            {% endfor %}
           </span>
         </span>
       </div>
@@ -80,6 +81,7 @@
   </main>
 </div>
 <script>
+const MODEL_LABELS = {{ dict(models) | tojson }};
 const PAGE = {{ page_size }};
 let hits = [], page = 1, lastQ = "";
 const $ = s => document.querySelector(s);
@@ -166,7 +168,7 @@ async function search(remember = true) {
     hits = d.results;
     const filt = checked("months").length || checked("length").length ? ", filtered" : "";
     $("#status").textContent = hits.length
-      ? `${hits.length} results in ${d.elapsed_ms} ms (${val("model").toUpperCase()}, ${val("level")} level${filt})`
+      ? `${hits.length} results in ${d.elapsed_ms} ms (${MODEL_LABELS[val("model")] || val("model")}, ${val("level")} level${filt})`
       : `No results for "${q}"` + (filt ? " with these filters. Try clearing a filter." : ". Try fewer or different words.") +
         (d.query_terms.length ? "" : " (Only stop words or symbols were entered.)");
   } catch (e) {
@@ -209,7 +211,7 @@ function renderHistory() {
   $("#clear-history").hidden = h.length === 0;
   $("#history-list").innerHTML = h.map(x => `<li>
     <button type="button" class="h-run" data-ts="${x.ts}"><span class="h-date">${fmtDate(x.ts)}</span>
-      <span class="h-q">${esc(x.q)}</span><span class="h-tags">${esc(x.level)} &middot; ${esc(x.model.toUpperCase())}</span></button>
+      <span class="h-q">${esc(x.q)}</span><span class="h-tags">${esc(x.level)} &middot; ${esc(MODEL_LABELS[x.model] || x.model)}</span></button>
     <button type="button" class="h-del" data-ts="${x.ts}" aria-label="Delete search: ${esc(x.q)}">&times;</button></li>`).join("");
 }
 $("#open-history").addEventListener("click", showHistory);
