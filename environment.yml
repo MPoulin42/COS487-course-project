@@ -9,8 +9,10 @@ dependencies:
       - flask
       - beautifulsoup4
       - nltk
-      # Part 2 (neural retrieval). The default PyPI torch wheel for Linux bundles CUDA.
-      - torch>=2.4
+      # Part 2 (neural retrieval). The CS GPU servers' NVIDIA driver supports CUDA <= 12.4, and the
+      # default PyPI torch wheel needs a newer driver ("driver too old"), so take the cu124 build.
+      - --extra-index-url https://download.pytorch.org/whl/cu124
+      - torch==2.6.*
       - sentence-transformers==6.2.0
       - transformers==5.5.0
       - huggingface-hub>=1.5,<2

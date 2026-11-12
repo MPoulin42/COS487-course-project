@@ -4,6 +4,9 @@
 bash install.sh                                   # conda env "ir-project" + NLTK stopwords
 conda activate ir-project
 export HF_HOME=/path/to/your/netstore/hf_cache    # CS servers: keep model downloads off the home quota
+# CS servers: the shared /opt/anaconda3 conda can fail with a PermissionError. If it does, use a venv instead:
+#   /usr/bin/python3 -m venv ~/netstore1/venvs/ir-project && source ~/netstore1/venvs/ir-project/bin/activate
+#   pip install 'torch==2.6.*' --index-url https://download.pytorch.org/whl/cu124   # then the other packages in environment.yml
 
 # Part 2 (GPU): fine-tune both neural models, encode the collection, write the 8 result files, evaluate
 bash run.sh part2 DATA_DIR QUERIES_DIR TEAM
