@@ -6,3 +6,14 @@ search_times.json
 *_sig.csv
 data/
 Retrieval Results/
+
+# Course handout PDFs
+Project-Part 2.pdf
+Course Project Overview-1.pdf
+Project-Part 1-1.pdf
+
+# Part 2 artifacts (large)
+neural_cache/
+models/
+indexes/
+search_times_part2.json
